@@ -1,102 +1,127 @@
 /**
- * ============================================================
- *  LOCAL DEVELOPMENT SERVER
- *  For testing before deployment
- * ============================================================
+ * HLS Stream Extractor - Express Server
+ * For Railway / Docker deployment
  */
 
 const http = require('http');
 const url = require('url');
-
-const indexHandler = require('./api/index');
-const healthHandler = require('./api/health');
-const extractHandler = require('./api/extract');
+const { extractStreams, pick, wait, USER_AGENTS, VIEWPORTS, CONFIG } = require('./api/extract');
 
 const PORT = process.env.PORT || 3000;
-
-// Mock response for Vercel-style handlers
-function createMockResponse(res) {
-    return {
-        _headers: {},
-        _statusCode: 200,
-
-        setHeader(name, value) {
-            this._headers[name] = value;
-            return this;
-        },
-
-        status(code) {
-            this._statusCode = code;
-            return this;
-        },
-
-        json(data) {
-            res.writeHead(this._statusCode, {
-                'Content-Type': 'application/json',
-                ...this._headers
-            });
-            res.end(JSON.stringify(data, null, 2));
-        },
-
-        end(data) {
-            res.writeHead(this._statusCode, this._headers);
-            res.end(data);
-        }
-    };
-}
 
 const server = http.createServer(async (req, res) => {
     const parsedUrl = url.parse(req.url, true);
     const pathname = parsedUrl.pathname;
-    req.query = parsedUrl.query;
-    const mockRes = createMockResponse(res);
+    const query = parsedUrl.query;
+
+    // CORS headers
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Content-Type', 'application/json');
 
     if (req.method === 'OPTIONS') {
-        res.writeHead(200, {
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type'
-        });
+        res.writeHead(200);
         res.end();
         return;
     }
 
-    try {
-        if (pathname === '/' || pathname === '/api' || pathname === '/api/') {
-            await indexHandler(req, mockRes);
-        } else if (pathname === '/api/health' || pathname === '/health') {
-            await healthHandler(req, mockRes);
-        } else if (pathname === '/api/extract' || pathname === '/extract') {
-            await extractHandler(req, mockRes);
-        } else {
-            res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Not Found' }));
-        }
-    } catch (error) {
-        console.error('Error:', error);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Internal Server Error', details: error.message }));
+    // Routes
+    if (pathname === '/' || pathname === '/api' || pathname === '/api/') {
+        res.writeHead(200);
+        res.end(JSON.stringify({
+            status: 'online',
+            service: 'HLS Stream Extractor API',
+            version: '2.0.0',
+            description: 'Generic M3U8/HLS stream extraction using Puppeteer',
+            endpoints: {
+                extract: {
+                    method: 'GET',
+                    path: '/api/extract',
+                    params: {
+                        url: 'Target page URL (required)'
+                    },
+                    example: '/api/extract?url=https://example.com/video-page'
+                },
+                health: {
+                    method: 'GET',
+                    path: '/api/health'
+                }
+            }
+        }, null, 2));
+        return;
     }
+
+    if (pathname === '/api/health' || pathname === '/health') {
+        res.writeHead(200);
+        res.end(JSON.stringify({
+            status: 'ok',
+            service: 'hls-stream-extractor',
+            version: '2.0.0',
+            timestamp: new Date().toISOString()
+        }, null, 2));
+        return;
+    }
+
+    if (pathname === '/api/extract' || pathname === '/extract') {
+        const targetUrl = query.url;
+
+        if (!targetUrl) {
+            res.writeHead(400);
+            res.end(JSON.stringify({
+                success: false,
+                error: 'Missing url parameter',
+                usage: '/api/extract?url=<target_url>'
+            }, null, 2));
+            return;
+        }
+
+        try {
+            new URL(targetUrl);
+        } catch {
+            res.writeHead(400);
+            res.end(JSON.stringify({
+                success: false,
+                error: 'Invalid URL'
+            }, null, 2));
+            return;
+        }
+
+        console.log(`[REQUEST] ${targetUrl}`);
+
+        const userAgent = pick(USER_AGENTS);
+        const viewport = pick(VIEWPORTS);
+
+        let result = await extractStreams(targetUrl, userAgent, viewport);
+
+        if (!result.success && CONFIG.RETRY_COUNT > 0) {
+            console.log('[RETRY]');
+            await wait(1000);
+            result = await extractStreams(targetUrl, pick(USER_AGENTS), pick(VIEWPORTS));
+        }
+
+        if (result.success) {
+            res.writeHead(200);
+            res.end(JSON.stringify({
+                success: true,
+                data: {
+                    stream_url: result.stream_url,
+                    headers: result.headers
+                },
+                all_streams: result.all_streams
+            }, null, 2));
+        } else {
+            res.writeHead(404);
+            res.end(JSON.stringify(result, null, 2));
+        }
+        return;
+    }
+
+    // 404 for unknown routes
+    res.writeHead(404);
+    res.end(JSON.stringify({ error: 'Not Found' }));
 });
 
-server.listen(PORT, () => {
-    console.log(`
-╔════════════════════════════════════════════════════════════════╗
-║       🚀 HLS STREAM EXTRACTOR - LOCAL SERVER                  ║
-╠════════════════════════════════════════════════════════════════╣
-║  Port: ${PORT}                                                    ║
-║                                                                ║
-║  Endpoints:                                                    ║
-║    GET  http://localhost:${PORT}/                                 ║
-║    GET  http://localhost:${PORT}/api/health                       ║
-║    GET  http://localhost:${PORT}/api/extract?url=...              ║
-║                                                                ║
-║  Deploy: vercel --prod                                         ║
-╚════════════════════════════════════════════════════════════════╝
-    `);
-});
-
-process.on('SIGINT', () => {
-    console.log('\nShutting down...');
-    process.exit(0);
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`HLS Stream Extractor API running on port ${PORT}`);
 });

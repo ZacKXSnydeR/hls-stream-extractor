@@ -2,11 +2,10 @@
   "name": "hls-stream-extractor",
   "version": "2.0.0",
   "description": "Generic HLS/M3U8 Stream Extractor API - Serverless Ready",
-  "main": "api/extract.js",
+  "main": "server.js",
   "scripts": {
-    "dev": "vercel dev",
-    "deploy": "vercel --prod",
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
   "keywords": [
     "hls",
@@ -19,8 +18,7 @@
   "author": "",
   "license": "UNLICENSED",
   "dependencies": {
-    "@sparticuz/chromium": "^131.0.1",
-    "puppeteer-core": "^23.0.0"
+    "puppeteer": "^23.0.0"
   },
   "engines": {
     "node": ">=18.0.0"

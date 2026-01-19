@@ -2,17 +2,15 @@
  * HLS Stream Extractor API
  * 
  * Extracts M3U8/HLS streaming URLs from web pages using headless browser.
- * Designed for Vercel serverless deployment.
+ * Runs on Docker with full Puppeteer support.
  */
 
-const chromium = require('@sparticuz/chromium');
-const puppeteer = require('puppeteer-core');
+const puppeteer = require('puppeteer');
 
 // -----------------------------------------------------------------
 // CONFIGURATION
 // -----------------------------------------------------------------
 const CONFIG = {
-    TOTAL_TIMEOUT: 55000,
     NAVIGATION_TIMEOUT: 20000,
     STREAM_WAIT_TIME: 20000,
     MAX_CLICK_ATTEMPTS: 8,
@@ -109,15 +107,18 @@ async function extractStreams(targetUrl, userAgent, viewport) {
     try {
         console.log('[INIT] Launching browser');
 
-        // Ensure fonts are loaded for headless rendering
-        chromium.setHeadlessMode = true;
-        chromium.setGraphicsMode = false;
-
         browser = await puppeteer.launch({
-            args: chromium.args,
+            headless: 'new',
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--disable-gpu',
+                '--disable-web-security',
+                '--disable-features=IsolateOrigins,site-per-process'
+            ],
             defaultViewport: viewport,
-            executablePath: await chromium.executablePath(),
-            headless: chromium.headless,
             ignoreHTTPSErrors: true
         });
 
@@ -263,49 +264,6 @@ async function extractStreams(targetUrl, userAgent, viewport) {
 }
 
 // -----------------------------------------------------------------
-// API HANDLER
+// EXPORT FOR SERVER
 // -----------------------------------------------------------------
-module.exports = async (req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-    if (req.method === 'OPTIONS') return res.status(200).end();
-
-    const { url } = req.query;
-
-    if (!url) {
-        return res.status(400).json({
-            success: false,
-            error: 'Missing url parameter',
-            usage: '/api/extract?url=<target_url>'
-        });
-    }
-
-    try { new URL(url); } catch {
-        return res.status(400).json({ success: false, error: 'Invalid URL' });
-    }
-
-    const userAgent = pick(USER_AGENTS);
-    const viewport = pick(VIEWPORTS);
-
-    console.log(`[REQUEST] ${url}`);
-
-    let result = await extractStreams(url, userAgent, viewport);
-
-    if (!result.success && CONFIG.RETRY_COUNT > 0) {
-        console.log('[RETRY]');
-        await wait(1000);
-        result = await extractStreams(url, pick(USER_AGENTS), pick(VIEWPORTS));
-    }
-
-    if (result.success) {
-        return res.status(200).json({
-            success: true,
-            data: { stream_url: result.stream_url, headers: result.headers },
-            all_streams: result.all_streams
-        });
-    }
-
-    return res.status(404).json(result);
-};
+module.exports = { extractStreams, pick, wait, USER_AGENTS, VIEWPORTS, CONFIG };
