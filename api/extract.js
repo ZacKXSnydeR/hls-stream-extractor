@@ -16,7 +16,7 @@ const CONFIG = {
     NAVIGATION_TIMEOUT: 20000,
     STREAM_WAIT_TIME: 20000,
     MAX_CLICK_ATTEMPTS: 8,
-    RETRY_COUNT: 2
+    RETRY_COUNT: 1
 };
 
 // -----------------------------------------------------------------
@@ -27,7 +27,6 @@ const USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15',
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
 ];
 
@@ -38,8 +37,7 @@ const VIEWPORTS = [
     { width: 1920, height: 1080 },
     { width: 1366, height: 768 },
     { width: 1536, height: 864 },
-    { width: 1440, height: 900 },
-    { width: 1280, height: 720 }
+    { width: 1440, height: 900 }
 ];
 
 // -----------------------------------------------------------------
@@ -50,28 +48,24 @@ const STREAM_PATTERNS = [
     /master\.m3u8/i,
     /index\.m3u8/i,
     /playlist\.m3u8/i,
-    /chunklist.*\.m3u8/i,
     /manifest.*\.m3u8/i,
     /video.*\.m3u8/i,
     /hls.*\.m3u8/i,
-    /stream.*\.m3u8/i,
     /\.mpd(\?|$)/i,
     /\.mp4(\?|$)/i
 ];
 
-const MASTER_PATTERNS = [/master/i, /index/i, /manifest/i, /playlist/i, /main/i];
+const MASTER_PATTERNS = [/master/i, /index/i, /manifest/i, /playlist/i];
 
 // -----------------------------------------------------------------
 // PLAY BUTTON SELECTORS
 // -----------------------------------------------------------------
 const PLAY_SELECTORS = [
-    '.play-button', '.play-btn', '.play', '#play', '[class*="play-button"]',
+    '.play-button', '.play-btn', '.play', '#play',
     'button[class*="play"]', 'div[class*="play"]', '[aria-label*="play" i]',
-    '.vjs-big-play-button', '.vjs-play-control',
-    '.jw-icon-display', '.jw-display-icon-container',
+    '.vjs-big-play-button', '.jw-icon-display',
     '.plyr__control--overlaid', '[data-plyr="play"]',
-    '.fp-play', '.mejs__overlay-play',
-    'video', '.player', '.video-player', '#player'
+    'video', '.player', '#player'
 ];
 
 // -----------------------------------------------------------------
@@ -81,10 +75,8 @@ const BLOCKED_RESOURCES = ['image', 'stylesheet', 'font', 'imageset'];
 
 const BLOCKED_DOMAINS = [
     'googlesyndication.com', 'googleadservices.com', 'google-analytics.com',
-    'googletagmanager.com', 'doubleclick.net', 'facebook.net', 'facebook.com',
-    'amazon-adsystem.com', 'adnxs.com', 'taboola.com', 'outbrain.com',
-    'criteo.com', 'popads.net', 'popcash.net', 'propellerads.com',
-    'hotjar.com', 'mixpanel.com', 'segment.io'
+    'doubleclick.net', 'facebook.net', 'amazon-adsystem.com',
+    'popads.net', 'propellerads.com', 'hotjar.com'
 ];
 
 // -----------------------------------------------------------------
@@ -102,7 +94,6 @@ function getStreamPriority(url) {
     if (url.includes('master')) score += 5;
     if (url.includes('index')) score += 4;
     if (url.includes('manifest')) score += 3;
-    if (url.includes('.mpd')) score += 8;
     if (/segment|chunk|\.ts\?/.test(url)) score -= 5;
     return score;
 }
@@ -118,18 +109,12 @@ async function extractStreams(targetUrl, userAgent, viewport) {
     try {
         console.log('[INIT] Launching browser');
 
+        // Ensure fonts are loaded for headless rendering
+        chromium.setHeadlessMode = true;
+        chromium.setGraphicsMode = false;
+
         browser = await puppeteer.launch({
-            args: [
-                ...chromium.args,
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
-                '--disable-gpu',
-                '--disable-web-security',
-                '--disable-features=IsolateOrigins,site-per-process',
-                `--window-size=${viewport.width},${viewport.height}`
-            ],
+            args: chromium.args,
             defaultViewport: viewport,
             executablePath: await chromium.executablePath(),
             headless: chromium.headless,
@@ -141,7 +126,6 @@ async function extractStreams(targetUrl, userAgent, viewport) {
 
         await page.setExtraHTTPHeaders({
             'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
         });
 
@@ -166,8 +150,7 @@ async function extractStreams(targetUrl, userAgent, viewport) {
                         'User-Agent': userAgent,
                         'Origin': new URL(targetUrl).origin
                     },
-                    priority: getStreamPriority(url),
-                    source: 'request'
+                    priority: getStreamPriority(url)
                 };
 
                 capturedStreams.set(url, streamData);
@@ -181,11 +164,11 @@ async function extractStreams(targetUrl, userAgent, viewport) {
             request.continue();
         });
 
-        // Response monitoring for JSON-embedded URLs
+        // Response body parsing for embedded URLs
         page.on('response', async (response) => {
             try {
                 const contentType = response.headers()['content-type'] || '';
-                if (contentType.includes('json') || contentType.includes('text')) {
+                if (contentType.includes('json') || contentType.includes('javascript')) {
                     const text = await response.text().catch(() => '');
                     const matches = text.match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/gi) || [];
 
@@ -198,8 +181,7 @@ async function extractStreams(targetUrl, userAgent, viewport) {
                                     'User-Agent': userAgent,
                                     'Origin': new URL(targetUrl).origin
                                 },
-                                priority: getStreamPriority(match),
-                                source: 'body-parse'
+                                priority: getStreamPriority(match)
                             });
                         }
                     }
@@ -218,44 +200,28 @@ async function extractStreams(targetUrl, userAgent, viewport) {
         });
 
         // Navigate
-        console.log(`[NAV] Going to ${targetUrl}`);
+        console.log(`[NAV] ${targetUrl}`);
         await page.goto(targetUrl, {
             waitUntil: 'domcontentloaded',
             timeout: CONFIG.NAVIGATION_TIMEOUT
-        }).catch(e => console.log('[NAV] Partial load:', e.message));
+        }).catch(e => console.log('[NAV] Partial:', e.message));
 
         await wait(3000);
 
-        // Find iframe if present
-        let contextToClick = page;
-        const frames = page.frames();
-        for (const frame of frames) {
-            const frameUrl = frame.url();
-            if (frameUrl && frameUrl !== 'about:blank' && frameUrl !== targetUrl && !isBlocked(frameUrl)) {
-                contextToClick = frame;
-                break;
-            }
-        }
-
         // Click campaign
-        let clickAttempts = 0;
-        const startTime = Date.now();
+        let attempts = 0;
+        const start = Date.now();
 
-        while (clickAttempts < CONFIG.MAX_CLICK_ATTEMPTS &&
-            (Date.now() - startTime) < CONFIG.STREAM_WAIT_TIME) {
-
+        while (attempts < CONFIG.MAX_CLICK_ATTEMPTS && (Date.now() - start) < CONFIG.STREAM_WAIT_TIME) {
+            // Try play buttons
             for (const selector of PLAY_SELECTORS) {
                 try {
-                    const element = await contextToClick.$(selector);
-                    if (element) {
-                        const box = await element.boundingBox();
+                    const el = await page.$(selector);
+                    if (el) {
+                        const box = await el.boundingBox();
                         if (box && box.width > 10 && box.height > 10) {
-                            const x = box.x + box.width / 2;
-                            const y = box.y + box.height / 2;
-                            if (x > 0 && x < viewport.width && y > 0 && y < viewport.height) {
-                                await page.mouse.click(x, y);
-                                await wait(500);
-                            }
+                            await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+                            await wait(500);
                         }
                     }
                 } catch (e) { }
@@ -264,15 +230,13 @@ async function extractStreams(targetUrl, userAgent, viewport) {
             // Center click
             await page.mouse.click(viewport.width / 2, viewport.height / 2);
 
-            if (bestStream && isMasterPlaylist(bestStream.url)) {
-                break;
-            }
+            if (bestStream && isMasterPlaylist(bestStream.url)) break;
 
-            clickAttempts++;
+            attempts++;
             await wait(2000);
         }
 
-        await wait(3000);
+        await wait(2000);
 
         // Results
         const allStreams = Array.from(capturedStreams.values())
@@ -284,19 +248,17 @@ async function extractStreams(targetUrl, userAgent, viewport) {
                 success: true,
                 stream_url: bestStream.url,
                 headers: bestStream.headers,
-                all_streams: allStreams.map(s => ({ url: s.url, priority: s.priority, source: s.source }))
+                all_streams: allStreams.map(s => ({ url: s.url, priority: s.priority }))
             };
         }
 
-        return { success: false, error: 'No streams detected', attempted_clicks: clickAttempts };
+        return { success: false, error: 'No streams found' };
 
     } catch (error) {
         console.error('[ERROR]', error.message);
         return { success: false, error: error.message };
     } finally {
-        if (browser) {
-            await browser.close().catch(() => { });
-        }
+        if (browser) await browser.close().catch(() => { });
     }
 }
 
@@ -308,9 +270,7 @@ module.exports = async (req, res) => {
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
-    }
+    if (req.method === 'OPTIONS') return res.status(200).end();
 
     const { url } = req.query;
 
@@ -322,9 +282,7 @@ module.exports = async (req, res) => {
         });
     }
 
-    try {
-        new URL(url);
-    } catch {
+    try { new URL(url); } catch {
         return res.status(400).json({ success: false, error: 'Invalid URL' });
     }
 
@@ -336,8 +294,8 @@ module.exports = async (req, res) => {
     let result = await extractStreams(url, userAgent, viewport);
 
     if (!result.success && CONFIG.RETRY_COUNT > 0) {
-        console.log('[RETRY] Trying again');
-        await wait(2000);
+        console.log('[RETRY]');
+        await wait(1000);
         result = await extractStreams(url, pick(USER_AGENTS), pick(VIEWPORTS));
     }
 
