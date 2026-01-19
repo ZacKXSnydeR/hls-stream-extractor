@@ -587,4 +587,4 @@ The authors are not responsible for misuse of this software.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+This project is for educational and personal use only. Commercial use is prohibited. See [LICENSE](LICENSE) for details.
