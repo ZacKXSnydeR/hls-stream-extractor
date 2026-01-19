@@ -2,9 +2,9 @@ FROM ghcr.io/puppeteer/puppeteer:23.0.0
 
 WORKDIR /app
 
-COPY package*.json ./
+COPY package.json ./
 
-RUN npm ci
+RUN npm install
 
 COPY . .
 
