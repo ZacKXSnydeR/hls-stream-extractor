@@ -121,19 +121,87 @@ exoPlayer.play()
 ```
 
 ### Electron Desktop App
-```javascript
-// main.js - Inject headers for CDN requests
-const { session } = require('electron');
 
-session.defaultSession.webRequest.onBeforeSendHeaders(
-    { urls: ['*://*/*'] },
-    (details, callback) => {
-        // Use headers from API response
-        details.requestHeaders['Referer'] = 'https://example.com/';
-        details.requestHeaders['Origin'] = 'https://example.com';
+**main.js** - Header injection for CDN requests:
+```javascript
+const { app, BrowserWindow, session } = require('electron');
+
+let streamHeaders = {};
+
+// Store headers when received from renderer
+const { ipcMain } = require('electron');
+ipcMain.on('set-stream-headers', (event, headers) => {
+    streamHeaders = headers;
+});
+
+app.whenReady().then(() => {
+    // Inject headers for all CDN requests
+    session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+        if (streamHeaders.Referer) {
+            details.requestHeaders['Referer'] = streamHeaders.Referer;
+        }
+        if (streamHeaders.Origin) {
+            details.requestHeaders['Origin'] = streamHeaders.Origin;
+        }
+        if (streamHeaders['User-Agent']) {
+            details.requestHeaders['User-Agent'] = streamHeaders['User-Agent'];
+        }
         callback({ requestHeaders: details.requestHeaders });
+    });
+    
+    // Create window...
+});
+```
+
+**renderer.js** - Fetch stream and play with hls.js:
+```javascript
+const { ipcRenderer } = require('electron');
+const Hls = require('hls.js');
+
+const API_URL = 'https://your-app.railway.app';
+
+async function playVideo(pageUrl) {
+    const video = document.getElementById('video');
+    
+    // 1. Extract stream from API
+    const response = await fetch(`${API_URL}/api/extract?url=${encodeURIComponent(pageUrl)}`);
+    const data = await response.json();
+    
+    if (!data.success) {
+        console.error('Extraction failed:', data.error);
+        return;
     }
-);
+    
+    // 2. Send headers to main process for injection
+    ipcRenderer.send('set-stream-headers', data.data.headers);
+    
+    // 3. Play with hls.js
+    if (Hls.isSupported()) {
+        const hls = new Hls();
+        hls.loadSource(data.data.stream_url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            video.play();
+        });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = data.data.stream_url;
+        video.play();
+    }
+}
+```
+
+**index.html**:
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body>
+    <video id="video" controls width="100%"></video>
+    <script src="renderer.js"></script>
+</body>
+</html>
 ```
 
 ## Important Notes
