@@ -23,6 +23,6 @@
     "puppeteer-core": "^23.0.0"
   },
   "engines": {
-    "node": "20.x"
+    "node": ">=18.0.0"
   }
 }
