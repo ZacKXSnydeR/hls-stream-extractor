@@ -126,10 +126,11 @@ exoPlayer.play()
 const { session } = require('electron');
 
 session.defaultSession.webRequest.onBeforeSendHeaders(
-    { urls: ['*://*.vodvidl.site/*'] },
+    { urls: ['*://*/*'] },
     (details, callback) => {
-        details.requestHeaders['Referer'] = 'https://vidlink.pro/';
-        details.requestHeaders['Origin'] = 'https://vidlink.pro';
+        // Use headers from API response
+        details.requestHeaders['Referer'] = 'https://example.com/';
+        details.requestHeaders['Origin'] = 'https://example.com';
         callback({ requestHeaders: details.requestHeaders });
     }
 );
