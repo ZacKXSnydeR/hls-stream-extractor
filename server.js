@@ -141,8 +141,8 @@ setInterval(() => {
 
     console.log(`[HEALTH] Memory: ${heapUsedMB}MB / ${heapTotalMB}MB`);
 
-    // Force GC if heap usage is high
-    if (global.gc && heapUsedMB > 400) {
+    // More aggressive GC for low-RAM VPS
+    if (global.gc && heapUsedMB > 200) { // Reduced from 400MB
         console.log('[HEALTH] High memory usage, triggering GC');
         global.gc();
     }

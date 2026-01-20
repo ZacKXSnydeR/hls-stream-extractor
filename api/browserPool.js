@@ -6,7 +6,7 @@
 const puppeteer = require('puppeteer');
 
 class BrowserPool {
-    constructor(poolSize = 2) {
+    constructor(poolSize = 1) { // Reduced from 2 to 1 for low-RAM VPS
         this.poolSize = poolSize;
         this.browsers = [];
         this.available = [];
@@ -45,7 +45,13 @@ class BrowserPool {
                 '--disable-gpu',
                 '--disable-web-security',
                 '--disable-features=IsolateOrigins,site-per-process',
-                '--disable-blink-features=AutomationControlled'
+                '--disable-blink-features=AutomationControlled',
+                // Memory optimization for low-RAM VPS
+                '--single-process',
+                '--no-zygote',
+                '--disable-software-rasterizer',
+                '--disable-gpu-sandbox',
+                '--js-flags=--max-old-space-size=256'
             ],
             ignoreHTTPSErrors: true
         });
@@ -104,8 +110,8 @@ class BrowserPool {
     }
 }
 
-// Global pool instance
-const browserPool = new BrowserPool(2);
+// Global pool instance - using 1 browser for low-RAM VPS
+const browserPool = new BrowserPool(1);
 
 // Initialize pool on startup
 browserPool.initialize().catch(e =>
