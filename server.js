@@ -116,7 +116,8 @@ const server = http.createServer(async (req, res) => {
                 success: true,
                 data: {
                     stream_url: result.stream_url,
-                    headers: result.headers
+                    headers: result.headers,
+                    subtitles: result.subtitles || []
                 },
                 all_streams: result.all_streams
             }, null, 2));

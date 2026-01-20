@@ -56,6 +56,54 @@ const STREAM_PATTERNS = [
 const MASTER_PATTERNS = [/master/i, /index/i, /manifest/i, /playlist/i];
 
 // -----------------------------------------------------------------
+// SUBTITLE DETECTION PATTERNS
+// -----------------------------------------------------------------
+const SUBTITLE_PATTERNS = [
+    /\.vtt(\?|$)/i,
+    /\.srt(\?|$)/i,
+    /\.ass(\?|$)/i,
+    /\.ssa(\?|$)/i,
+    /subtitle.*\.vtt/i,
+    /caption.*\.vtt/i,
+    /\/vtt\//i,
+    /\/subtitles\//i,
+    /\/captions\//i
+];
+
+const SUBTITLE_LANGUAGE_MAP = {
+    'en': 'English',
+    'eng': 'English',
+    'english': 'English',
+    'bn': 'Bengali',
+    'bangla': 'Bengali',
+    'bengali': 'Bengali',
+    'hi': 'Hindi',
+    'hindi': 'Hindi',
+    'ar': 'Arabic',
+    'arabic': 'Arabic',
+    'es': 'Spanish',
+    'spanish': 'Spanish',
+    'fr': 'French',
+    'french': 'French',
+    'de': 'German',
+    'german': 'German',
+    'zh': 'Chinese',
+    'chinese': 'Chinese',
+    'ja': 'Japanese',
+    'japanese': 'Japanese',
+    'ko': 'Korean',
+    'korean': 'Korean',
+    'pt': 'Portuguese',
+    'portuguese': 'Portuguese',
+    'ru': 'Russian',
+    'russian': 'Russian',
+    'it': 'Italian',
+    'italian': 'Italian',
+    'tr': 'Turkish',
+    'turkish': 'Turkish'
+};
+
+// -----------------------------------------------------------------
 // PLAY BUTTON SELECTORS
 // -----------------------------------------------------------------
 const PLAY_SELECTORS = [
@@ -85,6 +133,7 @@ const wait = (ms) => new Promise(r => setTimeout(r, ms));
 const isBlocked = (url) => BLOCKED_DOMAINS.some(d => url.includes(d));
 const looksLikeStream = (url) => STREAM_PATTERNS.some(p => p.test(url));
 const isMasterPlaylist = (url) => MASTER_PATTERNS.some(p => p.test(url));
+const looksLikeSubtitle = (url) => SUBTITLE_PATTERNS.some(p => p.test(url));
 
 function getStreamPriority(url) {
     let score = 0;
@@ -94,6 +143,47 @@ function getStreamPriority(url) {
     if (url.includes('manifest')) score += 3;
     if (/segment|chunk|\.ts\?/.test(url)) score -= 5;
     return score;
+}
+
+function extractLanguageFromUrl(url) {
+    // Try to extract language code from URL
+    const urlLower = url.toLowerCase();
+
+    // Check for language codes in URL path or query params
+    for (const [code, language] of Object.entries(SUBTITLE_LANGUAGE_MAP)) {
+        if (urlLower.includes(`/${code}/`) ||
+            urlLower.includes(`/${code}.`) ||
+            urlLower.includes(`_${code}.`) ||
+            urlLower.includes(`-${code}.`) ||
+            urlLower.includes(`=${code}&`) ||
+            urlLower.includes(`lang=${code}`) ||
+            urlLower.includes(`language=${code}`)) {
+            return language;
+        }
+    }
+
+    return 'Unknown';
+}
+
+function isValidSubtitle(url) {
+    // Filter out garbage URLs
+    const urlLower = url.toLowerCase();
+
+    // Must have proper extension
+    if (!/\.(vtt|srt|ass|ssa)(\?|$)/i.test(url)) return false;
+
+    // Reject if looks like ad/tracker
+    if (urlLower.includes('analytics') ||
+        urlLower.includes('tracking') ||
+        urlLower.includes('pixel') ||
+        urlLower.includes('beacon')) {
+        return false;
+    }
+
+    // Reject tiny URLs (likely garbage)
+    if (url.length < 20) return false;
+
+    return true;
 }
 
 // -----------------------------------------------------------------
@@ -111,6 +201,7 @@ async function extractStreams(targetUrl, userAgent, viewport) {
 async function extractStreamsInternal(targetUrl, userAgent, viewport) {
     let browser = null;
     const capturedStreams = new Map();
+    const capturedSubtitles = new Map();
     let bestStream = null;
 
     try {
@@ -151,6 +242,7 @@ async function extractStreamsInternal(targetUrl, userAgent, viewport) {
                 return;
             }
 
+            // Capture streams
             if (looksLikeStream(url)) {
                 const headers = request.headers();
                 const streamData = {
@@ -164,11 +256,23 @@ async function extractStreamsInternal(targetUrl, userAgent, viewport) {
                 };
 
                 capturedStreams.set(url, streamData);
-                console.log(`[CAPTURED] ${url.substring(0, 100)}`);
+                console.log(`[STREAM] ${url.substring(0, 100)}`);
 
                 if (!bestStream || streamData.priority > bestStream.priority) {
                     bestStream = streamData;
                 }
+            }
+
+            // Capture subtitles
+            if (looksLikeSubtitle(url) && isValidSubtitle(url)) {
+                const language = extractLanguageFromUrl(url);
+                const subtitleData = {
+                    url: url,
+                    language: language
+                };
+
+                capturedSubtitles.set(url, subtitleData);
+                console.log(`[SUBTITLE] ${language}: ${url.substring(0, 80)}`);
             }
 
             request.continue();
@@ -252,12 +356,15 @@ async function extractStreamsInternal(targetUrl, userAgent, viewport) {
         const allStreams = Array.from(capturedStreams.values())
             .sort((a, b) => b.priority - a.priority);
 
+        const allSubtitles = Array.from(capturedSubtitles.values());
+
         if (allStreams.length > 0) {
             bestStream = allStreams[0];
             return {
                 success: true,
                 stream_url: bestStream.url,
                 headers: bestStream.headers,
+                subtitles: allSubtitles,
                 all_streams: allStreams.map(s => ({ url: s.url, priority: s.priority }))
             };
         }
