@@ -227,14 +227,24 @@ async function extractStreamsInternal(targetUrl, userAgent, viewport) {
     let foundMasterPlaylist = false;
 
     try {
-        console.log('[INIT] Acquiring browser from pool');
+        console.log('[INIT] Launching fresh browser (unique fingerprint)');
         const startTime = Date.now();
 
-        // Get browser from pool (much faster than launching new one)
-        browser = await browserPool.acquire();
-        isPoolBrowser = browserPool.browsers.includes(browser);
+        // Launch FRESH browser for unique fingerprint each time
+        browser = await puppeteer.launch({
+            headless: true,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-web-security',
+                '--disable-features=IsolateOrigins,site-per-process',
+                '--disable-blink-features=AutomationControlled'
+            ]
+        });
+        isPoolBrowser = false;
 
-        console.log(`[INIT] Browser ready in ${Date.now() - startTime}ms`);
+        console.log(`[INIT] Fresh browser ready in ${Date.now() - startTime}ms`);
 
         const page = await browser.newPage();
         await page.setUserAgent(userAgent);
