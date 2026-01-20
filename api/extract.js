@@ -6,14 +6,19 @@
  */
 
 const puppeteer = require('puppeteer');
+const { browserPool } = require('./browserPool');
+const { resultCache } = require('./cache');
 
 // -----------------------------------------------------------------
 // CONFIGURATION
 // -----------------------------------------------------------------
 const CONFIG = {
-    NAVIGATION_TIMEOUT: 20000,
-    STREAM_WAIT_TIME: 20000,
-    MAX_CLICK_ATTEMPTS: 8,
+    NAVIGATION_TIMEOUT: 15000,      // Reduced from 20s
+    INITIAL_WAIT: 2000,             // Wait after page load
+    STREAM_DETECTION_WINDOW: 10000, // Max time to wait for streams
+    MAX_CLICK_ATTEMPTS: 6,          // Reduced from 8
+    CLICK_DELAY: 800,               // Reduced from 2000ms
+    EARLY_EXIT_DELAY: 1000,         // Wait after finding master playlist
     RETRY_COUNT: 1
 };
 
@@ -187,40 +192,49 @@ function isValidSubtitle(url) {
 }
 
 // -----------------------------------------------------------------
-// MAIN EXTRACTION WITH TIMEOUT
+// MAIN EXTRACTION WITH CACHING AND TIMEOUT
 // -----------------------------------------------------------------
 async function extractStreams(targetUrl, userAgent, viewport) {
-    return Promise.race([
+    // Check cache first
+    const cached = resultCache.get(targetUrl);
+    if (cached) {
+        console.log('[CACHE] Returning cached result');
+        return cached;
+    }
+
+    // Extract with timeout
+    const result = await Promise.race([
         extractStreamsInternal(targetUrl, userAgent, viewport),
         new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Extraction timeout')), 60000)
+            setTimeout(() => reject(new Error('Extraction timeout')), 50000) // Reduced from 60s
         )
     ]);
+
+    // Cache successful results
+    if (result.success) {
+        resultCache.set(targetUrl, result);
+    }
+
+    return result;
 }
 
 async function extractStreamsInternal(targetUrl, userAgent, viewport) {
     let browser = null;
+    let isPoolBrowser = false;
     const capturedStreams = new Map();
     const capturedSubtitles = new Map();
     let bestStream = null;
+    let foundMasterPlaylist = false;
 
     try {
-        console.log('[INIT] Launching browser');
+        console.log('[INIT] Acquiring browser from pool');
+        const startTime = Date.now();
 
-        browser = await puppeteer.launch({
-            headless: 'new',
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
-                '--disable-gpu',
-                '--disable-web-security',
-                '--disable-features=IsolateOrigins,site-per-process'
-            ],
-            defaultViewport: viewport,
-            ignoreHTTPSErrors: true
-        });
+        // Get browser from pool (much faster than launching new one)
+        browser = await browserPool.acquire();
+        isPoolBrowser = browserPool.browsers.includes(browser);
+
+        console.log(`[INIT] Browser ready in ${Date.now() - startTime}ms`);
 
         const page = await browser.newPage();
         await page.setUserAgent(userAgent);
@@ -320,37 +334,55 @@ async function extractStreamsInternal(targetUrl, userAgent, viewport) {
             timeout: CONFIG.NAVIGATION_TIMEOUT
         }).catch(e => console.log('[NAV] Partial:', e.message));
 
-        await wait(3000);
+        // Reduced initial wait
+        await wait(CONFIG.INITIAL_WAIT);
 
-        // Click campaign
+        // Optimized click campaign with early exit
         let attempts = 0;
         const start = Date.now();
+        const detectionWindow = CONFIG.STREAM_DETECTION_WINDOW;
 
-        while (attempts < CONFIG.MAX_CLICK_ATTEMPTS && (Date.now() - start) < CONFIG.STREAM_WAIT_TIME) {
-            // Try play buttons
+        while (attempts < CONFIG.MAX_CLICK_ATTEMPTS && (Date.now() - start) < detectionWindow && !foundMasterPlaylist) {
+            // Parallel clicking - try all elements at once for speed
+            const clickPromises = [];
+
             for (const selector of PLAY_SELECTORS) {
-                try {
-                    const el = await page.$(selector);
-                    if (el) {
-                        const box = await el.boundingBox();
-                        if (box && box.width > 10 && box.height > 10) {
-                            await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-                            await wait(500);
-                        }
-                    }
-                } catch (e) { }
+                clickPromises.push(
+                    (async () => {
+                        try {
+                            const el = await page.$(selector);
+                            if (el) {
+                                const box = await el.boundingBox();
+                                if (box && box.width > 10 && box.height > 10) {
+                                    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+                                    await wait(300); // Small delay between clicks
+                                }
+                            }
+                        } catch (e) { }
+                    })()
+                );
             }
 
-            // Center click
+            // Wait for all parallel clicks to complete
+            await Promise.all(clickPromises);
+
+            // Center click as fallback
             await page.mouse.click(viewport.width / 2, viewport.height / 2);
 
-            if (bestStream && isMasterPlaylist(bestStream.url)) break;
+            // Early exit if we found a master playlist
+            if (bestStream && isMasterPlaylist(bestStream.url)) {
+                console.log('[EARLY EXIT] Master playlist found');
+                foundMasterPlaylist = true;
+                await wait(CONFIG.EARLY_EXIT_DELAY); // Brief wait to catch more streams
+                break;
+            }
 
             attempts++;
-            await wait(2000);
+            await wait(CONFIG.CLICK_DELAY);
         }
 
-        await wait(2000);
+        // Final wait for any remaining streams
+        await wait(1000);
 
         // Results
         const allStreams = Array.from(capturedStreams.values())
@@ -375,26 +407,28 @@ async function extractStreamsInternal(targetUrl, userAgent, viewport) {
         console.error('[ERROR]', error.message);
         return { success: false, error: error.message };
     } finally {
-        // Aggressive cleanup to prevent memory leaks
+        // Cleanup: return browser to pool or close if temporary
         if (browser) {
             try {
-                // Close all pages first
+                // Close all pages except the default one
                 const pages = await browser.pages();
-                await Promise.all(pages.map(page =>
-                    page.close().catch(() => { })
-                ));
+                for (let i = 1; i < pages.length; i++) {
+                    await pages[i].close().catch(() => { });
+                }
 
-                // Disconnect browser
-                browser.disconnect();
-
-                // Force close browser process
-                await browser.close();
+                // Return to pool or close
+                if (isPoolBrowser) {
+                    console.log('[POOL] Returning browser to pool');
+                    browserPool.release(browser, false);
+                } else {
+                    console.log('[POOL] Closing temporary browser');
+                    await browser.close().catch(() => { });
+                }
             } catch (e) {
                 console.error('[CLEANUP ERROR]', e.message);
+                // If cleanup fails, try to close anyway
+                browser.close().catch(() => { });
             }
-
-            // Force null to ensure garbage collection
-            browser = null;
         }
     }
 }
