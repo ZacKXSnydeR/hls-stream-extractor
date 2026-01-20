@@ -32,6 +32,32 @@ Works on any platform that supports Docker:
 - Google Cloud Run
 - Self-hosted servers
 
+## Security (API Key)
+
+**Protect your deployed instance from unauthorized use:**
+
+1. Copy `.env.example` to `.env`:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Generate a secure API key:
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+   ```
+
+3. Set the API key in `.env`:
+   ```
+   API_KEY=your-generated-key-here
+   ```
+
+4. Deploy with environment variable:
+   - **Railway/DigitalOcean:** Add `API_KEY` in environment variables
+   - **Docker:** Pass via `-e API_KEY=your-key`
+
+**Without API key:** Anyone can use your server  
+**With API key:** Only those with your key can use it
+
 ## API Reference
 
 ### Base URL
@@ -57,7 +83,7 @@ Extract stream URL from a page.
 
 **Example:**
 ```
-GET /api/extract?url=https://example.com/video-page
+GET /api/extract?url=https://example.com/video-page&key=YOUR_API_KEY
 ```
 
 **Response:**

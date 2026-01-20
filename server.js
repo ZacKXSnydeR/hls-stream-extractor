@@ -88,6 +88,18 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/extract' || pathname === '/extract') {
         const targetUrl = query.url;
+        const apiKey = query.key || req.headers['x-api-key'];
+
+        // Check API key if configured
+        if (process.env.API_KEY && apiKey !== process.env.API_KEY) {
+            res.writeHead(401);
+            res.end(JSON.stringify({
+                success: false,
+                error: 'Unauthorized: Invalid or missing API key',
+                usage: 'Add ?key=YOUR_API_KEY or header X-API-Key: YOUR_API_KEY'
+            }, null, 2));
+            return;
+        }
 
         if (!targetUrl) {
             res.writeHead(400);
