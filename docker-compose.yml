@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  hls-extractor:
+    build: .
+    container_name: hls-extractor
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - API_KEY=${API_KEY}
+    command: [ "node", "--expose-gc", "server.js" ]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
