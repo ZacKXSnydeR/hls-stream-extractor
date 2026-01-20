@@ -6,6 +6,7 @@
 const http = require('http');
 const url = require('url');
 const { extractStreams, pick, wait, USER_AGENTS, VIEWPORTS, CONFIG } = require('./api/extract');
+const { requestQueue } = require('./api/requestQueue');
 
 const PORT = process.env.PORT || 3000;
 
@@ -52,6 +53,28 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
+    // Stats endpoint
+    if (pathname === '/api/stats' || pathname === '/stats') {
+        const { resultCache } = require('./api/cache');
+        const queueStats = requestQueue.getStats();
+
+        res.writeHead(200);
+        res.end(JSON.stringify({
+            status: 'ok',
+            queue: queueStats,
+            cache: {
+                size: resultCache.size(),
+                ttl: '30 minutes'
+            },
+            memory: {
+                heapUsed: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
+                heapTotal: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + 'MB'
+            },
+            timestamp: new Date().toISOString()
+        }, null, 2));
+        return;
+    }
+
     if (pathname === '/api/health' || pathname === '/health') {
         res.writeHead(200);
         res.end(JSON.stringify({
@@ -89,16 +112,21 @@ const server = http.createServer(async (req, res) => {
 
         console.log(`[REQUEST] ${targetUrl}`);
 
-        const userAgent = pick(USER_AGENTS);
-        const viewport = pick(VIEWPORTS);
+        // Queue extraction to prevent overload
+        const result = await requestQueue.process(async () => {
+            const userAgent = pick(USER_AGENTS);
+            const viewport = pick(VIEWPORTS);
 
-        let result = await extractStreams(targetUrl, userAgent, viewport);
+            let extractResult = await extractStreams(targetUrl, userAgent, viewport);
 
-        if (!result.success && CONFIG.RETRY_COUNT > 0) {
-            console.log('[RETRY]');
-            await wait(1000);
-            result = await extractStreams(targetUrl, pick(USER_AGENTS), pick(VIEWPORTS));
-        }
+            if (!extractResult.success && CONFIG.RETRY_COUNT > 0) {
+                console.log('[RETRY]');
+                await wait(1000);
+                extractResult = await extractStreams(targetUrl, pick(USER_AGENTS), pick(VIEWPORTS));
+            }
+
+            return extractResult;
+        });
 
         // Force garbage collection after extraction
         if (global.gc) {

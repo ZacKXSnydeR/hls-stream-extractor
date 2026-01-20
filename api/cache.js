@@ -6,7 +6,7 @@
 class ResultCache {
     constructor() {
         this.cache = new Map();
-        this.ttl = 5 * 60 * 1000; // 5 minutes
+        this.ttl = 30 * 60 * 1000; // 30 minutes (increased for production)
 
         // Cleanup expired entries every minute
         setInterval(() => this.cleanup(), 60000);
