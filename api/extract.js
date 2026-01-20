@@ -337,52 +337,66 @@ async function extractStreamsInternal(targetUrl, userAgent, viewport) {
         // Reduced initial wait
         await wait(CONFIG.INITIAL_WAIT);
 
-        // Optimized click campaign with early exit
+        // Smart sequential clicking - balanced for speed + reliability
         let attempts = 0;
         const start = Date.now();
         const detectionWindow = CONFIG.STREAM_DETECTION_WINDOW;
 
         while (attempts < CONFIG.MAX_CLICK_ATTEMPTS && (Date.now() - start) < detectionWindow && !foundMasterPlaylist) {
-            // Parallel clicking - try all elements at once for speed
-            const clickPromises = [];
+            try {
+                // Sequential clicking - find first visible element only
+                let clicked = false;
 
-            for (const selector of PLAY_SELECTORS) {
-                clickPromises.push(
-                    (async () => {
-                        try {
-                            const el = await page.$(selector);
-                            if (el) {
-                                const box = await el.boundingBox();
-                                if (box && box.width > 10 && box.height > 10) {
-                                    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-                                    await wait(300); // Small delay between clicks
-                                }
+                for (const selector of PLAY_SELECTORS) {
+                    try {
+                        const el = await page.$(selector);
+                        if (el) {
+                            const box = await el.boundingBox();
+                            if (box && box.width > 10 && box.height > 10) {
+                                // Use element.click() instead of mouse.click() - more reliable
+                                await el.click();
+                                clicked = true;
+                                console.log(`[CLICK] ${selector}`);
+                                await wait(400); // Brief pause after click
+                                break; // Only click first found element
                             }
-                        } catch (e) { }
-                    })()
-                );
+                        }
+                    } catch (e) {
+                        // Element might be detached, continue to next
+                    }
+                }
+
+                // Gentle fallback: center click if no button found
+                if (!clicked) {
+                    await page.mouse.click(viewport.width / 2, viewport.height / 2);
+                    await wait(300);
+                }
+
+                // Check for master playlist after each attempt
+                if (capturedStreams.size > 0) {
+                    const streams = Array.from(capturedStreams.values());
+                    const master = streams.find(s => isMasterPlaylist(s.url));
+
+                    if (master) {
+                        console.log('[EARLY EXIT] Master playlist found');
+                        foundMasterPlaylist = true;
+                        bestStream = master;
+                        await wait(CONFIG.EARLY_EXIT_DELAY);
+                        break;
+                    }
+                }
+
+                attempts++;
+                await wait(CONFIG.CLICK_DELAY);
+
+            } catch (error) {
+                console.log(`[CLICK ERROR] ${error.message}`);
+                await wait(500); // Wait before retry on error
             }
-
-            // Wait for all parallel clicks to complete
-            await Promise.all(clickPromises);
-
-            // Center click as fallback
-            await page.mouse.click(viewport.width / 2, viewport.height / 2);
-
-            // Early exit if we found a master playlist
-            if (bestStream && isMasterPlaylist(bestStream.url)) {
-                console.log('[EARLY EXIT] Master playlist found');
-                foundMasterPlaylist = true;
-                await wait(CONFIG.EARLY_EXIT_DELAY); // Brief wait to catch more streams
-                break;
-            }
-
-            attempts++;
-            await wait(CONFIG.CLICK_DELAY);
         }
 
         // Final wait for any remaining streams
-        await wait(1000);
+        await wait(1500);
 
         // Results
         const allStreams = Array.from(capturedStreams.values())
