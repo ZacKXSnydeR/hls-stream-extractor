@@ -100,6 +100,16 @@ const server = http.createServer(async (req, res) => {
             result = await extractStreams(targetUrl, pick(USER_AGENTS), pick(VIEWPORTS));
         }
 
+        // Force garbage collection after extraction
+        if (global.gc) {
+            global.gc();
+            console.log('[GC] Triggered garbage collection');
+        }
+
+        // Log memory usage
+        const memUsage = process.memoryUsage();
+        console.log(`[MEMORY] Heap: ${Math.round(memUsage.heapUsed / 1024 / 1024)}MB / ${Math.round(memUsage.heapTotal / 1024 / 1024)}MB`);
+
         if (result.success) {
             res.writeHead(200);
             res.end(JSON.stringify({
@@ -122,6 +132,22 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({ error: 'Not Found' }));
 });
 
+// Monitor memory usage every 30 seconds
+setInterval(() => {
+    const mem = process.memoryUsage();
+    const heapUsedMB = Math.round(mem.heapUsed / 1024 / 1024);
+    const heapTotalMB = Math.round(mem.heapTotal / 1024 / 1024);
+
+    console.log(`[HEALTH] Memory: ${heapUsedMB}MB / ${heapTotalMB}MB`);
+
+    // Force GC if heap usage is high
+    if (global.gc && heapUsedMB > 400) {
+        console.log('[HEALTH] High memory usage, triggering GC');
+        global.gc();
+    }
+}, 30000);
+
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`HLS Stream Extractor API running on port ${PORT}`);
+    console.log(`GC available: ${!!global.gc}`);
 });

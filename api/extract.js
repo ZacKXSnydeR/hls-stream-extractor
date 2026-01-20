@@ -97,9 +97,18 @@ function getStreamPriority(url) {
 }
 
 // -----------------------------------------------------------------
-// MAIN EXTRACTION
+// MAIN EXTRACTION WITH TIMEOUT
 // -----------------------------------------------------------------
 async function extractStreams(targetUrl, userAgent, viewport) {
+    return Promise.race([
+        extractStreamsInternal(targetUrl, userAgent, viewport),
+        new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Extraction timeout')), 60000)
+        )
+    ]);
+}
+
+async function extractStreamsInternal(targetUrl, userAgent, viewport) {
     let browser = null;
     const capturedStreams = new Map();
     let bestStream = null;
@@ -259,7 +268,27 @@ async function extractStreams(targetUrl, userAgent, viewport) {
         console.error('[ERROR]', error.message);
         return { success: false, error: error.message };
     } finally {
-        if (browser) await browser.close().catch(() => { });
+        // Aggressive cleanup to prevent memory leaks
+        if (browser) {
+            try {
+                // Close all pages first
+                const pages = await browser.pages();
+                await Promise.all(pages.map(page =>
+                    page.close().catch(() => { })
+                ));
+
+                // Disconnect browser
+                browser.disconnect();
+
+                // Force close browser process
+                await browser.close();
+            } catch (e) {
+                console.error('[CLEANUP ERROR]', e.message);
+            }
+
+            // Force null to ensure garbage collection
+            browser = null;
+        }
     }
 }
 
