@@ -427,28 +427,26 @@ async function extractStreamsInternal(targetUrl, userAgent, viewport) {
         console.error('[ERROR]', error.message);
         return { success: false, error: error.message };
     } finally {
-        // Cleanup: return browser to pool or close if temporary
+        // AGGRESSIVE CLEANUP for 500MB Railway
         if (browser) {
             try {
-                // Close all pages except the default one
+                // Close ALL pages
                 const pages = await browser.pages();
-                for (let i = 1; i < pages.length; i++) {
-                    await pages[i].close().catch(() => { });
-                }
+                await Promise.allSettled(pages.map(p => p.close().catch(() => { })));
 
-                // Return to pool or close
-                if (isPoolBrowser) {
-                    console.log('[POOL] Returning browser to pool');
-                    browserPool.release(browser, false);
-                } else {
-                    console.log('[POOL] Closing temporary browser');
-                    await browser.close().catch(() => { });
-                }
+                // ALWAYS close browser - no pooling for low RAM
+                await browser.close();
+                console.log('[CLEANUP] Browser closed');
             } catch (e) {
                 console.error('[CLEANUP ERROR]', e.message);
-                // If cleanup fails, try to close anyway
-                browser.close().catch(() => { });
+                try { browser.close(); } catch (e2) { }
             }
+        }
+
+        // Force GC after each extraction
+        if (global.gc) {
+            global.gc();
+            console.log('[GC] Forced cleanup');
         }
     }
 }
